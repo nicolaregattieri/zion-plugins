@@ -1,0 +1,8 @@
+{
+  "name": "zion-core",
+  "version": "0.1.0",
+  "description": "Zion — Spec-Driven Development, from idea to verified code",
+  "author": { "name": "Nicola Regattieri" },
+  "repository": "https://github.com/pivotree/zion-core",
+  "hooks": "./hooks/hooks.json"
+}

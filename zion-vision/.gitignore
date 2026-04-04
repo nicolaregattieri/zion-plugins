@@ -1,0 +1,15 @@
+# SDD state (project-specific, not plugin code)
+.sdd/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Claude local settings
+.claude/settings.local.json
+
+# Node (Playwright)
+node_modules/

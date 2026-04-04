@@ -1,0 +1,61 @@
+#!/bin/bash
+# zion-validate-spec — Validate TECH_SPEC.md against the spec contract
+# Input: $1 = path to TECH_SPEC.md
+# Output: exit 0 + "VALID" if pass, exit 1 + issue list if fail
+
+SPEC="${1:-.sdd/TECH_SPEC.md}"
+ISSUES=()
+
+if [ ! -f "$SPEC" ]; then
+  echo "FAIL: File not found: $SPEC"
+  exit 1
+fi
+
+CONTENT=$(cat "$SPEC")
+
+# Check 8 mandatory sections
+for section in "## Goal" "## Constraints" "## Reuse" "## Acceptance Criteria" "## Architecture" "## Edge Cases" "## Out of Scope" "## Builder Notes"; do
+  if ! echo "$CONTENT" | grep -q "^$section"; then
+    ISSUES+=("Missing section: $section")
+  fi
+done
+
+# Check no TBD/TODO/placeholder
+for pattern in "TBD" "TODO" "PLACEHOLDER" "\\[TBD\\]" "\\[TODO\\]"; do
+  if echo "$CONTENT" | grep -qi "$pattern"; then
+    ISSUES+=("Contains forbidden placeholder: $pattern")
+  fi
+done
+
+# Check Acceptance Criteria have verification commands (backtick-wrapped)
+AC_SECTION=$(echo "$CONTENT" | sed -n '/^## Acceptance Criteria/,/^## /p' | sed '$d')
+AC_LINES=$(echo "$AC_SECTION" | grep -c "^[0-9]")
+AC_WITH_CMD=$(echo "$AC_SECTION" | grep -c '`.*`')
+if [ "$AC_LINES" -gt 0 ] && [ "$AC_WITH_CMD" -lt "$AC_LINES" ]; then
+  ISSUES+=("$((AC_LINES - AC_WITH_CMD)) acceptance criteria missing verification command (backtick-wrapped)")
+fi
+
+# Check Architecture has file paths
+ARCH_SECTION=$(echo "$CONTENT" | sed -n '/^## Architecture/,/^## /p' | sed '$d')
+if ! echo "$ARCH_SECTION" | grep -q '`[^ ]*[/\.][^ ]*`'; then
+  ISSUES+=("Architecture section has no file paths")
+fi
+
+# Check Out of Scope is non-empty
+OOS_SECTION=$(echo "$CONTENT" | sed -n '/^## Out of Scope/,$p')
+OOS_CONTENT=$(echo "$OOS_SECTION" | grep -v "^## " | grep -v "^$" | head -1)
+if [ -z "$OOS_CONTENT" ]; then
+  ISSUES+=("Out of Scope section is empty")
+fi
+
+# Report
+if [ ${#ISSUES[@]} -eq 0 ]; then
+  echo "VALID"
+  exit 0
+else
+  echo "INVALID: ${#ISSUES[@]} issue(s) found"
+  for issue in "${ISSUES[@]}"; do
+    echo "  - $issue"
+  done
+  exit 1
+fi

@@ -1,0 +1,26 @@
+{
+  "version": "0.1.0",
+  "spec_hash": "",
+  "created_at": "",
+  "focus_areas": [
+    {
+      "selector": "",
+      "label": ""
+    }
+  ],
+  "comparisons": [
+    {
+      "name": "",
+      "ref_path": "",
+      "build_url": "",
+      "breakpoints": [
+        {
+          "viewport": "",
+          "width": 0
+        }
+      ],
+      "focus_areas": [],
+      "result": null
+    }
+  ]
+}

@@ -1,0 +1,222 @@
+#!/bin/bash
+#
+# zion-capture-styles — Playwright wrapper for CSS value extraction
+#
+# Usage:
+#   zion-capture-styles <url> <selectors-json-file> <viewport> <output-dir>
+#
+# Arguments:
+#   url                 Full URL to capture (e.g. https://example.com)
+#   selectors-json-file Path to JSON file containing an array of CSS selectors
+#                       e.g. [".btn", ".card", "h1"]
+#   viewport            "desktop" (1280x800) or "mobile" (375x812)
+#   output-dir          Directory to save screenshot and JSON output
+#
+# Output:
+#   Prints JSON to stdout in design-values.template.json format
+#   Saves screenshot as <output-dir>/screenshot.png
+#
+# Notes:
+#   - ALWAYS runs Playwright in headless mode for consistency across CI and
+#     local environments. Never pass { headless: false }.
+#   - Screenshot longest edge is capped at 1568px for Claude token optimization.
+#   - Elements with zero bounding box (invisible/hidden) are skipped per selector.
+#
+# Exit codes:
+#   0  Success
+#   1  Argument error, Playwright not found, or navigation failure
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# 1. Validate arguments
+# ---------------------------------------------------------------------------
+if [ $# -eq 0 ]; then
+  echo "Usage: zion-capture-styles <url> <selectors-json-file> <viewport> <output-dir>" >&2
+  echo "" >&2
+  echo "  url                 Full URL to capture" >&2
+  echo "  selectors-json-file JSON file with array of CSS selectors" >&2
+  echo "  viewport            'desktop' (1280x800) or 'mobile' (375x812)" >&2
+  echo "  output-dir          Directory to save screenshot output" >&2
+  exit 1
+fi
+
+if [ $# -lt 4 ]; then
+  echo "Error: expected 4 arguments, got $#" >&2
+  echo "Usage: zion-capture-styles <url> <selectors-json-file> <viewport> <output-dir>" >&2
+  exit 1
+fi
+
+export ZCS_URL="$1"
+export ZCS_SELECTORS_FILE="$2"
+export ZCS_VIEWPORT="$3"
+export ZCS_OUTPUT_DIR="$4"
+
+# ---------------------------------------------------------------------------
+# 2. Check Playwright is available
+# ---------------------------------------------------------------------------
+if ! npx --yes playwright --version >/dev/null 2>&1; then
+  echo "Playwright not found. Install with: npm install -g playwright" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Validate selectors file exists
+# ---------------------------------------------------------------------------
+if [ ! -f "$ZCS_SELECTORS_FILE" ]; then
+  echo "Error: selectors file not found: $ZCS_SELECTORS_FILE" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Resolve viewport dimensions
+# ---------------------------------------------------------------------------
+if [ "$ZCS_VIEWPORT" = "desktop" ]; then
+  export ZCS_VIEWPORT_WIDTH=1280
+  export ZCS_VIEWPORT_HEIGHT=800
+elif [ "$ZCS_VIEWPORT" = "mobile" ]; then
+  export ZCS_VIEWPORT_WIDTH=375
+  export ZCS_VIEWPORT_HEIGHT=812
+else
+  echo "Error: viewport must be 'desktop' or 'mobile', got: $ZCS_VIEWPORT" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Ensure output directory exists
+# ---------------------------------------------------------------------------
+mkdir -p "$ZCS_OUTPUT_DIR"
+
+export ZCS_SCREENSHOT_PATH="$ZCS_OUTPUT_DIR/screenshot.png"
+
+# Export selectors JSON content via a temp file path to avoid env var size limits
+export ZCS_SELECTORS_JSON_PATH="$ZCS_SELECTORS_FILE"
+
+# ---------------------------------------------------------------------------
+# 6. Run Playwright via Node.js inline script
+#    Variables are passed via environment (ZCS_*) — safe for all bash versions
+#    and avoids shell-quoting special characters in URLs or JSON.
+# ---------------------------------------------------------------------------
+node - <<'NODESCRIPT'
+const { chromium } = require('playwright');
+const fs = require('fs');
+
+(async () => {
+  const url            = process.env.ZCS_URL;
+  const selectorsPath  = process.env.ZCS_SELECTORS_JSON_PATH;
+  const viewportWidth  = parseInt(process.env.ZCS_VIEWPORT_WIDTH, 10);
+  const viewportHeight = parseInt(process.env.ZCS_VIEWPORT_HEIGHT, 10);
+  const viewportName   = process.env.ZCS_VIEWPORT;
+  const screenshotPath = process.env.ZCS_SCREENSHOT_PATH;
+
+  let selectors;
+  try {
+    const raw = fs.readFileSync(selectorsPath, 'utf8');
+    selectors = JSON.parse(raw);
+  } catch (e) {
+    process.stderr.write('Error: selectors file is not valid JSON: ' + e.message + '\n');
+    process.exit(1);
+  }
+
+  if (!Array.isArray(selectors)) {
+    process.stderr.write('Error: selectors file must contain a JSON array of CSS selectors\n');
+    process.exit(1);
+  }
+
+  // ALWAYS headless — never set headless: false
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+
+  await page.setViewportSize({ width: viewportWidth, height: viewportHeight });
+
+  try {
+    await page.goto(url, { timeout: 30000, waitUntil: 'networkidle' });
+  } catch (e) {
+    process.stderr.write('Error: navigation timeout or failure for ' + url + ': ' + e.message + '\n');
+    await browser.close();
+    process.exit(1);
+  }
+
+  // Take full-page screenshot
+  await page.screenshot({ path: screenshotPath, fullPage: true });
+
+  // Resize screenshot so longest edge is max 1568px (Claude token optimization)
+  // Use sharp if available, otherwise skip resize with a warning
+  try {
+    const sharp = require('sharp');
+    const imgBuffer = fs.readFileSync(screenshotPath);
+    const metadata = await sharp(imgBuffer).metadata();
+    const longest = Math.max(metadata.width, metadata.height);
+    if (longest > 1568) {
+      const scale = 1568 / longest;
+      const newW = Math.round(metadata.width * scale);
+      const newH = Math.round(metadata.height * scale);
+      await sharp(imgBuffer)
+        .resize(newW, newH)
+        .png()
+        .toFile(screenshotPath);
+    }
+  } catch (e) {
+    process.stderr.write('Warning: sharp not available, screenshot not resized (' + e.message + ')\n');
+  }
+
+  // Extract computed styles for each selector
+  const properties = [
+    'font-size', 'font-weight', 'color',
+    'padding', 'margin', 'gap',
+    'width', 'height'
+  ];
+
+  const captured = {};
+
+  for (const selector of selectors) {
+    const elements = page.locator(selector);
+    const count = await elements.count();
+
+    if (count === 0) {
+      process.stderr.write('Warning: no elements found for selector: ' + selector + '\n');
+      captured[selector] = {};
+      continue;
+    }
+
+    // Use the first visible element (non-zero bounding box)
+    let targetIndex = -1;
+    for (let i = 0; i < count; i++) {
+      const el = elements.nth(i);
+      const box = await el.boundingBox();
+      if (box && box.width > 0 && box.height > 0) {
+        targetIndex = i;
+        break;
+      }
+    }
+
+    if (targetIndex === -1) {
+      process.stderr.write('Warning: no visible elements found for selector: ' + selector + '\n');
+      captured[selector] = {};
+      continue;
+    }
+
+    const styles = await elements.nth(targetIndex).evaluate((el, props) => {
+      const cs = window.getComputedStyle(el);
+      const result = {};
+      for (const prop of props) {
+        result[prop] = cs.getPropertyValue(prop) || '';
+      }
+      return result;
+    }, properties);
+
+    captured[selector] = styles;
+  }
+
+  await browser.close();
+
+  const output = {
+    source: url,
+    viewport: viewportName,
+    captured_at: new Date().toISOString(),
+    selectors: captured
+  };
+
+  process.stdout.write(JSON.stringify(output, null, 2) + '\n');
+})();
+NODESCRIPT

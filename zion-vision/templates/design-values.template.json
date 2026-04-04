@@ -1,0 +1,17 @@
+{
+  "source": "",
+  "viewport": "",
+  "captured_at": "",
+  "selectors": {
+    ".example-selector": {
+      "font-size": "",
+      "font-weight": "",
+      "color": "",
+      "padding": "",
+      "margin": "",
+      "gap": "",
+      "width": "",
+      "height": ""
+    }
+  }
+}

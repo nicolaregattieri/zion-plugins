@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "spec_hash": "sha256:...",
+  "created_at": "ISO-8601",
+  "waves": 0,
+  "tasks": [
+    {
+      "id": 1,
+      "title": "Short descriptive title",
+      "description": "What to implement and why. Complete enough that a fresh agent can execute without guessing.",
+      "files": ["src/example/file.ts", "src/example/file.test.ts"],
+      "criteria": [
+        "npm test -- file.test.ts exits 0",
+        "file exports expectedFunction"
+      ],
+      "deps": [],
+      "wave": 1,
+      "status": "pending",
+      "cycles": 0,
+      "started_at": null,
+      "completed_at": null,
+      "commit_sha": null,
+      "blocked_reason": null
+    }
+  ]
+}

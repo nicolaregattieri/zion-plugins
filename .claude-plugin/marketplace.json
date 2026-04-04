@@ -1,0 +1,17 @@
+{
+  "name": "zion",
+  "owner": { "name": "Nicola Regattieri" },
+  "description": "Zion — Spec-Driven Development plugins for Claude Code",
+  "plugins": [
+    {
+      "name": "zion-core",
+      "source": "./zion-core",
+      "description": "SDD engine — from idea to verified code. 6 commands: spec, plan, build, verify, fix, status."
+    },
+    {
+      "name": "zion-vision",
+      "source": "./zion-vision",
+      "description": "Visual QA with computed-style verification. Extends zion-core for frontend/UI projects."
+    }
+  ]
+}

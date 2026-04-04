@@ -1,0 +1,34 @@
+#!/bin/bash
+# zion-parse-flags — Parse flags from skill arguments
+# Input: $1 = raw arguments string
+# Output: JSON on stdout with flag values and remaining args
+# Supports: --safe, --dry, --pr (build), --auto, --task N (fix)
+
+INPUT="${1:-}"
+SAFE=false
+DRY=false
+PR=false
+AUTO=false
+TASK=null
+ARGS=""
+NEXT_IS_TASK=false
+
+for word in $INPUT; do
+  if [ "$NEXT_IS_TASK" = true ]; then
+    TASK=$word
+    NEXT_IS_TASK=false
+    continue
+  fi
+  case "$word" in
+    --safe)  SAFE=true ;;
+    --dry)   DRY=true ;;
+    --pr)    PR=true ;;
+    --auto)  AUTO=true ;;
+    --task)  NEXT_IS_TASK=true ;;
+    *)       ARGS="${ARGS:+$ARGS }$word" ;;
+  esac
+done
+
+cat <<EOF
+{"safe":$SAFE,"dry":$DRY,"pr":$PR,"auto":$AUTO,"task":$TASK,"args":"$ARGS"}
+EOF

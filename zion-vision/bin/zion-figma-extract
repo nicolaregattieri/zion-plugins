@@ -1,0 +1,261 @@
+#!/bin/bash
+# zion-figma-extract: Extract design values from a Figma node via REST API
+# Usage: zion-figma-extract <figma-url> <output-dir>
+
+set -euo pipefail
+
+# ── Usage guard ────────────────────────────────────────────────────────────────
+if [[ $# -lt 2 ]]; then
+  echo "Usage: zion-figma-extract <figma-url> <output-dir>" >&2
+  exit 1
+fi
+
+FIGMA_URL="$1"
+OUTPUT_DIR="$2"
+
+# ── Token check ────────────────────────────────────────────────────────────────
+if [[ -z "${CLAUDE_PLUGIN_OPTION_figma_token:-}" ]]; then
+  echo "Error: CLAUDE_PLUGIN_OPTION_figma_token is not set. Export your Figma personal access token before running this script." >&2
+  exit 1
+fi
+
+FIGMA_TOKEN="${CLAUDE_PLUGIN_OPTION_figma_token}"
+
+# ── Parse Figma URL ────────────────────────────────────────────────────────────
+# Supported formats:
+#   https://www.figma.com/file/<key>/<title>?node-id=<id>
+#   https://www.figma.com/design/<key>/<title>?node-id=<id>
+
+FILE_KEY=""
+NODE_ID_RAW=""
+
+if [[ "$FIGMA_URL" =~ figma\.com/(file|design)/([A-Za-z0-9]+) ]]; then
+  FILE_KEY="${BASH_REMATCH[2]}"
+else
+  echo "Error: Could not parse Figma file key from URL: $FIGMA_URL" >&2
+  exit 1
+fi
+
+if [[ "$FIGMA_URL" =~ [?&]node-id=([^&]+) ]]; then
+  NODE_ID_RAW="${BASH_REMATCH[1]}"
+  # URL-decode %3A -> : and %2C -> ,
+  NODE_ID_RAW="${NODE_ID_RAW//%3A/:}"
+  NODE_ID_RAW="${NODE_ID_RAW//%2C/,}"
+else
+  echo "Error: Could not parse node-id from URL: $FIGMA_URL" >&2
+  exit 1
+fi
+
+# ── Handle multiple node IDs ───────────────────────────────────────────────────
+if [[ "$NODE_ID_RAW" == *","* ]]; then
+  echo "Warning: Multiple node IDs detected ('$NODE_ID_RAW'). Using only the first." >&2
+  NODE_ID="${NODE_ID_RAW%%,*}"
+else
+  NODE_ID="$NODE_ID_RAW"
+fi
+
+# Figma API needs colons URL-encoded as %3A when used in query params
+NODE_ID_ENC="${NODE_ID//:/%3A}"
+
+echo "Figma file key : $FILE_KEY"
+echo "Node ID        : $NODE_ID"
+
+# ── Prepare output directory ───────────────────────────────────────────────────
+mkdir -p "$OUTPUT_DIR"
+
+NODE_JSON="$OUTPUT_DIR/node.json"
+IMAGE_PNG="$OUTPUT_DIR/node.png"
+VALUES_JSON="$OUTPUT_DIR/design-values.json"
+
+FIGMA_API="https://api.figma.com/v1"
+
+# ── Helper: checked curl ───────────────────────────────────────────────────────
+figma_get() {
+  local url="$1"
+  local out="$2"
+  local http_code
+
+  http_code=$(curl -sS -w "%{http_code}" \
+    -H "X-Figma-Token: $FIGMA_TOKEN" \
+    -o "$out" \
+    "$url")
+
+  case "$http_code" in
+    200)
+      return 0
+      ;;
+    429)
+      echo "Error: Figma API rate limit exceeded (HTTP 429). Please wait and try again." >&2
+      exit 1
+      ;;
+    403)
+      echo "Error: Figma API access denied (HTTP 403). Check that CLAUDE_PLUGIN_OPTION_figma_token is a valid Figma personal access token." >&2
+      exit 1
+      ;;
+    *)
+      echo "Error: Figma API returned HTTP $http_code for $url" >&2
+      exit 1
+      ;;
+  esac
+}
+
+# ── Fetch node data ────────────────────────────────────────────────────────────
+echo "Fetching node data..."
+figma_get \
+  "${FIGMA_API}/files/${FILE_KEY}/nodes?ids=${NODE_ID_ENC}" \
+  "$NODE_JSON"
+
+# ── Fetch rendered PNG ─────────────────────────────────────────────────────────
+echo "Fetching rendered image..."
+IMG_META="$OUTPUT_DIR/_img_meta.json"
+figma_get \
+  "${FIGMA_API}/images/${FILE_KEY}?ids=${NODE_ID_ENC}&scale=2&format=png" \
+  "$IMG_META"
+
+# Parse image URL from JSON (simple grep+sed, no jq required)
+IMG_URL=$(grep -o '"[^"]*\.png[^"]*"' "$IMG_META" | head -1 | tr -d '"')
+
+if [[ -z "$IMG_URL" ]]; then
+  echo "Warning: Could not find PNG URL in image response. Skipping image download." >&2
+else
+  echo "Downloading rendered PNG..."
+  curl -sS -o "$IMAGE_PNG" "$IMG_URL"
+  echo "Saved rendered PNG to $IMAGE_PNG"
+fi
+
+rm -f "$IMG_META"
+
+# ── Extract design values from node JSON ───────────────────────────────────────
+# Uses Python3 (available on macOS) to parse the Figma JSON and produce
+# design-values.json in the standard template format.
+
+python3 - "$NODE_JSON" "$NODE_ID" "$VALUES_JSON" "$FIGMA_URL" <<'PYEOF'
+import sys, json, datetime, re
+
+node_json_path = sys.argv[1]
+node_id        = sys.argv[2]
+output_path    = sys.argv[3]
+source_url     = sys.argv[4]
+
+with open(node_json_path) as f:
+    data = json.load(f)
+
+# Figma returns nodes keyed by their ID (colons replaced by hyphens sometimes)
+nodes = data.get("nodes", {})
+# Try exact key, then colon-to-hyphen variant
+node_data = nodes.get(node_id) or nodes.get(node_id.replace(":", "-"))
+
+if not node_data:
+    # Fall back to first available node
+    node_data = next(iter(nodes.values()), None)
+
+if not node_data:
+    print(f"Warning: No node data found in response", file=sys.stderr)
+    node_data = {}
+
+document = node_data.get("document", {})
+
+def rgba_to_hex(c):
+    r = round(c.get("r", 0) * 255)
+    g = round(c.get("g", 0) * 255)
+    b = round(c.get("b", 0) * 255)
+    return "#{:02x}{:02x}{:02x}".format(r, g, b)
+
+def extract_fill_color(fills):
+    if not fills:
+        return None
+    for fill in fills:
+        if fill.get("type") == "SOLID" and fill.get("visible", True):
+            return rgba_to_hex(fill.get("color", {}))
+    return None
+
+def pt(val):
+    """Round to 1 decimal and return as string with 'px' or just the float."""
+    return round(float(val), 1)
+
+props = {}
+
+# Typography
+style = document.get("style", {})
+if style.get("fontSize"):
+    props["font-size"] = f"{pt(style['fontSize'])}px"
+if style.get("fontWeight"):
+    props["font-weight"] = str(style["fontWeight"])
+if style.get("fontFamily"):
+    props["font-family"] = style["fontFamily"]
+if style.get("lineHeightPx"):
+    props["line-height"] = f"{pt(style['lineHeightPx'])}px"
+if style.get("letterSpacing") is not None:
+    props["letter-spacing"] = f"{pt(style['letterSpacing'])}px"
+
+# Color (fills)
+fill_color = extract_fill_color(document.get("fills", []))
+if fill_color:
+    props["color"] = fill_color
+
+# Background color (background fills for frames/components)
+bg_color = extract_fill_color(document.get("background", []))
+if bg_color:
+    props["background-color"] = bg_color
+
+# Layout / spacing
+bb = document.get("absoluteBoundingBox", {})
+if bb.get("width"):
+    props["width"] = f"{pt(bb['width'])}px"
+if bb.get("height"):
+    props["height"] = f"{pt(bb['height'])}px"
+
+padding_top    = document.get("paddingTop")
+padding_right  = document.get("paddingRight")
+padding_bottom = document.get("paddingBottom")
+padding_left   = document.get("paddingLeft")
+
+if any(v is not None for v in [padding_top, padding_right, padding_bottom, padding_left]):
+    t = pt(padding_top    or 0)
+    r = pt(padding_right  or 0)
+    b = pt(padding_bottom or 0)
+    l = pt(padding_left   or 0)
+    if t == r == b == l:
+        props["padding"] = f"{t}px"
+    else:
+        props["padding"] = f"{t}px {r}px {b}px {l}px"
+
+item_spacing = document.get("itemSpacing")
+if item_spacing is not None:
+    props["gap"] = f"{pt(item_spacing)}px"
+
+# Border radius
+corner_radius = document.get("cornerRadius")
+if corner_radius is not None:
+    props["border-radius"] = f"{pt(corner_radius)}px"
+
+# Stroke (border)
+strokes = document.get("strokes", [])
+stroke_weight = document.get("strokeWeight")
+stroke_color = extract_fill_color(strokes)
+if stroke_color and stroke_weight:
+    props["border"] = f"{pt(stroke_weight)}px solid {stroke_color}"
+
+# Build selector from node name
+node_name = document.get("name", "node")
+selector = "." + re.sub(r"[^a-z0-9]+", "-", node_name.lower()).strip("-")
+
+output = {
+    "source": source_url,
+    "viewport": "",
+    "captured_at": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "selectors": {
+        selector: props
+    }
+}
+
+with open(output_path, "w") as f:
+    json.dump(output, f, indent=2)
+
+print(f"Extracted {len(props)} properties into selector '{selector}'")
+PYEOF
+
+echo "Saved node JSON    : $NODE_JSON"
+echo "Saved design values: $VALUES_JSON"
+echo "Done."
+exit 0

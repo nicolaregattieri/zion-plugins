@@ -1,0 +1,159 @@
+#!/bin/bash
+# zion-compare-values: Compare two design-values JSON files and report fidelity
+# Usage: zion-compare-values <reference.json> <build.json> [threshold]
+
+set -euo pipefail
+
+# ── Usage guard ────────────────────────────────────────────────────────────────
+if [[ $# -lt 2 ]]; then
+  echo "Usage: zion-compare-values <reference.json> <build.json> [threshold]" >&2
+  exit 1
+fi
+
+REFERENCE_JSON="$1"
+BUILD_JSON="$2"
+THRESHOLD="${3:-95}"
+
+# ── Validate input files ───────────────────────────────────────────────────────
+if [[ ! -f "$REFERENCE_JSON" ]]; then
+  echo "Error: Reference file not found: $REFERENCE_JSON" >&2
+  exit 1
+fi
+
+if [[ ! -f "$BUILD_JSON" ]]; then
+  echo "Error: Build file not found: $BUILD_JSON" >&2
+  exit 1
+fi
+
+# ── Run comparison via Python3 ─────────────────────────────────────────────────
+python3 - "$REFERENCE_JSON" "$BUILD_JSON" "$THRESHOLD" <<'PYEOF'
+import sys, json, math, re
+
+ref_path   = sys.argv[1]
+build_path = sys.argv[2]
+threshold  = float(sys.argv[3])
+
+# ── Load files ─────────────────────────────────────────────────────────────────
+with open(ref_path) as f:
+    ref_data = json.load(f)
+with open(build_path) as f:
+    build_data = json.load(f)
+
+ref_selectors   = ref_data.get("selectors", {})
+build_selectors = build_data.get("selectors", {})
+
+# ── Normalisation helpers ──────────────────────────────────────────────────────
+HEX3_RE  = re.compile(r'^#([0-9a-fA-F]{3})$')
+HEX6_RE  = re.compile(r'^#([0-9a-fA-F]{6})$')
+RGB_RE   = re.compile(r'^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$', re.I)
+RGBA_RE  = re.compile(r'^rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*[\d.]+\s*\)$', re.I)
+NUM_RE   = re.compile(r'^(-?[\d.]+)(px|em|rem|%|deg|vw|vh|s|ms)?$')
+
+def hex_to_rgb(h):
+    """Return 'rgb(r,g,b)' canonical form from any hex."""
+    m = HEX3_RE.match(h)
+    if m:
+        r,g,b = [int(c*2, 16) for c in m.group(1)]
+        return f"rgb({r},{g},{b})"
+    m = HEX6_RE.match(h)
+    if m:
+        s = m.group(1)
+        r,g,b = int(s[0:2],16), int(s[2:4],16), int(s[4:6],16)
+        return f"rgb({r},{g},{b})"
+    return None
+
+def normalize_color(val):
+    """Normalize any CSS color to rgb(r,g,b) string, or return original."""
+    v = val.strip()
+    rgb = hex_to_rgb(v)
+    if rgb:
+        return rgb
+    m = RGB_RE.match(v)
+    if m:
+        return f"rgb({m.group(1)},{m.group(2)},{m.group(3)})"
+    m = RGBA_RE.match(v)
+    if m:
+        return f"rgb({m.group(1)},{m.group(2)},{m.group(3)})"
+    return v  # unknown format — return as-is
+
+COLOR_PROPS = {"color", "background-color", "border-color", "fill", "stroke"}
+
+def normalize_value(prop, val):
+    """Normalize a single CSS value string."""
+    v = str(val).strip()
+    if any(p in prop for p in COLOR_PROPS) or v.startswith("#") or v.startswith("rgb"):
+        return normalize_color(v)
+    return v
+
+def parse_numeric(val):
+    """Extract (number, unit) from a value string, or (None, None)."""
+    m = NUM_RE.match(str(val).strip())
+    if m:
+        return float(m.group(1)), (m.group(2) or "")
+    return None, None
+
+# ── Run comparison ─────────────────────────────────────────────────────────────
+diffs = []
+total_pairs = 0
+matching_pairs = 0
+
+for selector, ref_props in ref_selectors.items():
+    build_props = build_selectors.get(selector, {})
+    for prop, ref_raw in ref_props.items():
+        if not ref_raw and ref_raw != 0:
+            continue  # skip empty reference values
+        total_pairs += 1
+        build_raw = build_props.get(prop)
+
+        ref_val   = normalize_value(prop, ref_raw)
+        build_val = normalize_value(prop, build_raw) if build_raw is not None else None
+
+        # Try numeric delta
+        ref_num, ref_unit     = parse_numeric(ref_val)
+        build_num, build_unit = parse_numeric(build_val) if build_val else (None, None)
+
+        delta = None
+        unit  = ref_unit or ""
+
+        if ref_num is not None and build_num is not None:
+            raw_delta = abs(ref_num - build_num)
+            # Treat deltas under 0.5px as zero
+            delta = 0.0 if raw_delta < 0.5 else round(raw_delta, 1)
+        elif build_val is not None:
+            # String comparison: exact match = delta 0, mismatch = delta 1
+            delta = 0.0 if ref_val == build_val else 1.0
+
+        # A pair counts as matching if delta == 0
+        is_match = (delta == 0.0)
+        if is_match:
+            matching_pairs += 1
+
+        if not is_match:
+            diffs.append({
+                "property": prop,
+                "selector": selector,
+                "expected": ref_val,
+                "actual":   build_val if build_val is not None else "(missing)",
+                "delta":    delta if delta is not None else None,
+                "unit":     unit
+            })
+
+# ── Compute fidelity ──────────────────────────────────────────────────────────
+if total_pairs == 0:
+    fidelity = 100.0
+else:
+    fidelity = round((matching_pairs / total_pairs) * 100, 2)
+
+passed = fidelity >= threshold
+
+result = {
+    "diffs":    diffs,
+    "fidelity": fidelity,
+    "pass":     passed
+}
+
+print(json.dumps(result, indent=2))
+
+# Exit code reflects pass/fail
+sys.exit(0 if passed else 1)
+PYEOF
