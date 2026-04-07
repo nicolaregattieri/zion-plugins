@@ -161,8 +161,7 @@ zion-vision/
 ├── skills/                          # 7 commands (spec, plan, build, verify, compare, ref, status)
 ├── agents/
 │   ├── spec-writer.md               # Opus — spec + vision-spec.json generation
-│   ├── task-executor.md             # Sonnet — code only, no visual QA responsibility
-│   └── vision-qa.md                 # Vision QA rules + anti-rationalization table
+│   └── task-executor.md             # Sonnet — code only, no visual QA responsibility
 ├── hooks/
 │   ├── hooks.json                   # SessionStart, Stop
 │   ├── vision-bootstrap.sh          # Inject visual QA context
