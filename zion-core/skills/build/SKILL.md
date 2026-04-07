@@ -140,18 +140,32 @@ After all tasks complete (or all remaining are blocked):
 
 ## Phase 4: Auto-Verify + Auto-Fix
 
-After self-review, automatically run the verify→fix loop. This is the same logic as `/zion:fix` auto mode, embedded in the build pipeline so the user gets a complete result from a single command.
+After self-review, run verification and attempt to fix failures inline. The goal is to deliver a complete result from a single `/zion:build` command — but never block the build on fixable issues.
 
-1. Run `/zion:verify` logic — 4-level check on all acceptance criteria
-2. Write `.sdd/verify-state.json` with results
-3. If ALL pass → proceed to Phase 5 (Summary)
-4. If failures exist → run `/zion:fix` auto-mode logic:
-   - Max 2 fix rounds
-   - Each round: diagnose (fresh agent) → create fix tasks → execute (3-cycle breaker) → re-verify failed criteria only
-   - Round 1 catches real bugs, Round 2 catches cascading issues from Round 1 fixes
-   - After Round 2, any remaining failures are marked BLOCKED
-   - Total max attempts per failure: 2 rounds × 3 cycles = 6 attempts
-5. Update `.sdd/verify-state.json` with final results
+### 4.1 Verify
+
+Run the 4-level check from `/zion:verify` on all acceptance criteria. Write `.sdd/verify-state.json`.
+
+If ALL pass → skip to Phase 5 (Summary).
+
+### 4.2 Fix (if failures exist)
+
+For each failing criterion:
+1. Read the failure evidence from `verify-state.json`
+2. Spawn a fresh `Agent(task-executor)` with the failure context + `learnings.md`
+3. Agent diagnoses root cause and fixes (same 3-cycle circuit breaker)
+4. On DONE: stage, commit as `fix(zion): <criterion description>`
+5. On BLOCKED after 3 cycles: log to learnings, move on to next failure
+
+### 4.3 Re-verify
+
+Re-run the 4-level check on **all criteria** (not just the ones that failed — fixes can cause regressions). Update `verify-state.json`.
+
+### 4.4 Round 2 (optional)
+
+If new failures appeared from Round 1 fixes, repeat 4.2-4.3 one more time. **Max 2 rounds total.**
+
+After Round 2, any remaining failures are reported in the summary — they do NOT block the build. The user can run `/zion:fix` manually to address them.
 
 ## Phase 5: Summary
 
