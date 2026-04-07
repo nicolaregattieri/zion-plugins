@@ -1,0 +1,27 @@
+#!/bin/bash
+# zion-require-figma-token — Just-in-time gate for Figma API access
+#
+# Called by skills/agents ONLY when a Figma URL is detected.
+# Token source: CLAUDE_PLUGIN_OPTION_figma_token (set via settings.local.json)
+
+if [ -n "${CLAUDE_PLUGIN_OPTION_figma_token:-}" ]; then
+  exit 0
+fi
+
+cat >&2 <<'MSG'
+FIGMA_TOKEN not found — needed to fetch this Figma reference.
+
+Configure it by running (in your terminal, not in the chat):
+
+  zion-figma-setup
+
+This stores the token in .claude/settings.local.json as a plugin option.
+Claude Code injects it as $CLAUDE_PLUGIN_OPTION_figma_token at runtime.
+
+To get a token:
+  1. https://www.figma.com/settings
+  2. Personal access tokens → Generate new token
+
+⚠ Do NOT paste the token in this chat.
+MSG
+exit 1

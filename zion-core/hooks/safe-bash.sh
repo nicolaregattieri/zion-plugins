@@ -25,14 +25,31 @@ case "$BASE_CMD" in
   *)     DENY="" ;;
 esac
 
+# Normalize command: strip quotes so cat ".env" and cat '.env' are caught
+NORM_CMD=$(echo "$COMMAND" | tr -d "\"'")
+
 # Pattern-based denies (only if base command didn't match)
 if [ -z "$DENY" ]; then
-  case "$COMMAND" in
+  case "$NORM_CMD" in
+    # Destructive operations
     *"rm -rf /"*)      DENY="dangerous rm" ;;
     *"rm -rf ~"*)      DENY="dangerous rm" ;;
     *"chmod -R 777"*)  DENY="dangerous chmod" ;;
     *"> /dev/s"*)      DENY="device write not allowed" ;;
     *"> /dev/d"*)      DENY="device write not allowed" ;;
+    # Env file reads — secrets must stay out of agent context
+    *cat*.env*)        DENY="env file read blocked — use \$VAR in commands" ;;
+    *head*.env*)       DENY="env file read blocked — use \$VAR in commands" ;;
+    *tail*.env*)       DENY="env file read blocked — use \$VAR in commands" ;;
+    *less*.env*)       DENY="env file read blocked — use \$VAR in commands" ;;
+    *more*.env*)       DENY="env file read blocked — use \$VAR in commands" ;;
+    *source*.env*)     DENY="env file source blocked — tokens would enter context" ;;
+    *". .env"*)        DENY="env file source blocked — tokens would enter context" ;;
+    # Env file search (grep/rg targeting .env files)
+    *grep*.env*)       DENY="env file search blocked — use \$VAR in commands" ;;
+    *rg*.env*)         DENY="env file search blocked — use \$VAR in commands" ;;
+    # Settings files with credentials
+    *settings.local*)  DENY="settings.local may contain tokens — blocked" ;;
     *)                 DENY="" ;;
   esac
 fi

@@ -41,6 +41,11 @@ fi
 
 # Condition (c): computed_values exists but NO numeric measurements (digits + px/rem/%/rgb())
 # Check each comparison for numeric values
+: "${TOTAL:=0}"
+if ! [ "$TOTAL" -gt 0 ] 2>/dev/null; then
+  # Can't read comparisons count — allow stop rather than block on corrupt file
+  exit 0
+fi
 BAD_NAME=""
 IDX=0
 while [ "$IDX" -lt "$TOTAL" ]; do

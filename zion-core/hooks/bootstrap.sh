@@ -20,10 +20,12 @@ fi
 
 # Task progress
 if [ -f ".sdd/tasks.json" ]; then
-  TOTAL=$(jq '.tasks | length' .sdd/tasks.json 2>/dev/null)
-  DONE=$(jq '[.tasks[] | select(.status == "done")] | length' .sdd/tasks.json 2>/dev/null)
-  BLOCKED=$(jq '[.tasks[] | select(.status == "blocked")] | length' .sdd/tasks.json 2>/dev/null)
-  PENDING=$(jq '[.tasks[] | select(.status == "pending")] | length' .sdd/tasks.json 2>/dev/null)
+  TOTAL=$(jq '.tasks | length' .sdd/tasks.json 2>/dev/null) || TOTAL=0
+  DONE=$(jq '[.tasks[] | select(.status == "done")] | length' .sdd/tasks.json 2>/dev/null) || DONE=0
+  BLOCKED=$(jq '[.tasks[] | select(.status == "blocked")] | length' .sdd/tasks.json 2>/dev/null) || BLOCKED=0
+  PENDING=$(jq '[.tasks[] | select(.status == "pending")] | length' .sdd/tasks.json 2>/dev/null) || PENDING=0
+  # Fallback for empty jq output
+  : "${TOTAL:=0}" "${DONE:=0}" "${BLOCKED:=0}" "${PENDING:=0}"
   OUTPUT="$OUTPUT, ${DONE}/${TOTAL} tasks done"
   if [ "$BLOCKED" -gt 0 ] 2>/dev/null; then
     OUTPUT="$OUTPUT ($BLOCKED blocked)"

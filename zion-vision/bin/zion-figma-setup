@@ -1,0 +1,78 @@
+#!/bin/bash
+# zion-figma-setup — Configure Figma API token for zion-vision
+#
+# Stores FIGMA_TOKEN in .claude/settings.local.json as a plugin option.
+# Claude Code injects it as CLAUDE_PLUGIN_OPTION_figma_token at runtime.
+#
+# Usage:
+#   zion-figma-setup          Add token to settings.local.json
+#   zion-figma-setup --check  Verify token is configured
+
+set -euo pipefail
+
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+BOLD='\033[1m'
+RESET='\033[0m'
+SETTINGS_FILE=".claude/settings.local.json"
+
+# ── Check mode ────────────────────────────────────────────────────────────────
+if [ "${1:-}" = "--check" ]; then
+  if [ -n "${CLAUDE_PLUGIN_OPTION_figma_token:-}" ]; then
+    echo -e "${GREEN}✓${RESET} FIGMA_TOKEN is available (via plugin options)"
+    exit 0
+  elif [ -f "$SETTINGS_FILE" ] && command -v jq >/dev/null 2>&1; then
+    TOKEN=$(jq -r '.pluginOptions["zion-vision"].figma_token // empty' "$SETTINGS_FILE" 2>/dev/null)
+    if [ -n "$TOKEN" ]; then
+      echo -e "${GREEN}✓${RESET} FIGMA_TOKEN found in $SETTINGS_FILE"
+      exit 0
+    fi
+  fi
+  echo -e "${RED}✗${RESET} FIGMA_TOKEN not found"
+  echo "  Run: zion-figma-setup"
+  exit 1
+fi
+
+# ── Interactive setup ─────────────────────────────────────────────────────────
+echo -e "${BOLD}Figma Token Setup${RESET}"
+echo ""
+echo "  1. Open https://www.figma.com/settings"
+echo "  2. Personal access tokens → Generate new token"
+echo "  3. Copy the token (starts with figd_)"
+echo ""
+
+read -r -s -p "  Paste token (hidden): " TOKEN
+echo ""
+
+if [ -z "$TOKEN" ]; then
+  echo -e "  ${RED}✗${RESET} No token provided. Aborting."
+  exit 1
+fi
+
+# ── Ensure .claude/ directory exists ──────────────────────────────────────────
+mkdir -p "$(dirname "$SETTINGS_FILE")"
+
+# ── Merge into settings.local.json (preserve existing settings) ───────────────
+if [ -f "$SETTINGS_FILE" ]; then
+  EXISTING=$(cat "$SETTINGS_FILE")
+else
+  EXISTING="{}"
+fi
+
+# Use jq to merge — set pluginOptions.zion-vision.figma_token
+if ! command -v jq >/dev/null 2>&1; then
+  echo -e "  ${RED}✗${RESET} jq is required but not installed."
+  echo "  Install with: brew install jq"
+  exit 1
+fi
+
+echo "$EXISTING" | jq --arg token "$TOKEN" '
+  .pluginOptions["zion-vision"].figma_token = $token
+' > "$SETTINGS_FILE"
+
+echo -e "  ${GREEN}✓${RESET} Saved to $SETTINGS_FILE"
+echo ""
+echo "  Token will be available as \$CLAUDE_PLUGIN_OPTION_figma_token"
+echo "  in your next Claude Code session."
+echo ""
+echo "  ⚠ Do NOT paste this token in the chat — it would enter the API context."
