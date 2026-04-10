@@ -35,6 +35,11 @@ Write `.sdd/.gitignore` if it does not exist:
 .active
 ```
 
+Create `.sdd/learnings.md` if it does not exist (task-executor reads this first):
+```bash
+[ -f .sdd/learnings.md ] || echo "# Learnings" > .sdd/learnings.md
+```
+
 ### Step 2: Detect Project Type
 
 Read root files to identify the project:

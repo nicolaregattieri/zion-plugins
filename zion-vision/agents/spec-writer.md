@@ -124,8 +124,11 @@ The schema is defined in `templates/vision-spec.template.json`. All fields are m
 
 When a Figma URL is provided:
 
-1. Delegate to `bin/zion-figma-extract <figma-url> <output-dir>` — this script downloads frame images from the Figma API and saves them as reference screenshots
-2. The script outputs a JSON manifest of saved paths — use these paths to populate `ref_path` in each comparison object
+1. Delegate to `bin/zion-figma-extract <figma-url> .sdd/refs/<name>` — this saves three files to the output dir:
+   - `node.json` — raw Figma API response
+   - `node.png` — rendered screenshot from Figma's image API
+   - `design-values.json` — extracted CSS properties (font-size, color, padding, etc.)
+2. Set `ref_path` to the output directory (e.g., `.sdd/refs/<name>`)
 3. Do NOT download Figma assets yourself with WebFetch. Always delegate to the bin script.
 4. If `bin/zion-figma-extract` is not available, flag as a BLOCKER in the spec and leave `ref_path` empty with a `# NEEDS: figma-extract` comment.
 
@@ -133,8 +136,8 @@ When a Figma URL is provided:
 
 When a live URL is provided as visual reference:
 
-1. Delegate to `bin/zion-capture-styles <url> <output-dir>` — this script captures screenshots and extracts computed CSS values
-2. Use the captured screenshot paths for `ref_path` and the extracted CSS values to define focus area selectors
+1. Delegate to `bin/zion-capture-styles <url> <selectors-json> <viewport> .sdd/refs/<name>/<viewport>` — captures screenshot + computed CSS values. Run once for desktop, once for mobile.
+2. Set `ref_path` to the parent directory (e.g., `.sdd/refs/<name>`). Use the extracted CSS property names to define focus area selectors.
 3. Do NOT attempt to scrape or screenshot URLs yourself. Always delegate to the bin script.
 4. If `bin/zion-capture-styles` is not available, flag as a BLOCKER and note it in Builder Notes.
 

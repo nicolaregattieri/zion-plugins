@@ -38,10 +38,18 @@ Load `.sdd/vision-spec.json`. Identify all comparisons where `result` is `null` 
 
 Each comparison entry has:
 - `name` — identifier
-- `ref_name` — which reference to compare against (maps to `.sdd/refs/<ref_name>/`)
+- `ref_path` — path to reference directory (e.g., `.sdd/refs/hero-button/`)
 - `build_url` — the URL of the build to screenshot
+- `breakpoints` — list of `{ viewport, width }` entries to test
 - `focus_areas` — list of CSS selectors to measure
 - `result` — `null` means not yet measured
+
+### Detect Reference Type
+
+Read `<ref_path>/source.json` to determine the reference type:
+- `"type": "live-url"` → has `desktop/` and `mobile/` subdirs with `design-values.json`
+- `"type": "figma-url"` → has `design-values.json` at root (no viewport subdirs)
+- `"type": "screenshot-file"` → image only, no computed values (skip numeric comparison, use Claude vision only)
 
 ---
 
@@ -61,23 +69,33 @@ Claude vision identifies **what to look at**. `getComputedStyle()` measures **th
 
 **Round 1 — Initial Measure**
 
-Call `bin/zion-capture-styles` against `build_url` for each viewport used in the reference:
+Write the comparison's `focus_areas` to a temp JSON array file (e.g., `/tmp/selectors.json`).
+
+Call `bin/zion-capture-styles` for each breakpoint in the comparison:
 
 ```bash
-zion-capture-styles <build_url> <selectors-file> desktop .sdd/compare/<name>/desktop
-zion-capture-styles <build_url> <selectors-file> mobile  .sdd/compare/<name>/mobile
+zion-capture-styles <build_url> <selectors-file> <viewport> .sdd/compare/<name>/<viewport>
 ```
 
-Selectors come from the comparison's `focus_areas` field (write them to a temp JSON array file).
+Then compare against the reference. Adapt the ref path based on source type:
 
-**Compare values with `bin/zion-compare-values`:**
-
+**Live URL refs** (have viewport subdirs):
 ```bash
 zion-compare-values \
-  .sdd/refs/<ref_name>/desktop/design-values.json \
+  <ref_path>/<viewport>/design-values.json \
+  .sdd/compare/<name>/<viewport>/design-values.json \
+  95
+```
+
+**Figma refs** (flat structure, single design-values.json):
+```bash
+zion-compare-values \
+  <ref_path>/design-values.json \
   .sdd/compare/<name>/desktop/design-values.json \
   95
 ```
+
+**Screenshot refs** (no computed values): skip `zion-compare-values`. Use Claude vision to compare images only. Mark result with `"computed_values": {}` and `"note": "screenshot-only comparison"`.
 
 The output JSON contains:
 - `diffs` — array of `{ property, selector, expected, actual, delta, unit }`
@@ -101,7 +119,7 @@ If `pass` is false:
 When presenting reference vs build screenshots to Claude vision for analysis, always label images and place them BEFORE the explanatory text:
 
 ```
-Reference: [image of .sdd/refs/<ref_name>/ref-desktop.png]
+Reference: [image of .sdd/refs/<ref_path>/ref-desktop.png]
 Build: [image of .sdd/compare/<name>/desktop/screenshot.png]
 
 Analysis: The reference shows X, the build shows Y...

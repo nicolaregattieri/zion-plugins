@@ -51,12 +51,25 @@ All outputs go to `.sdd/refs/<name>/`.
 
 **Triggered by:** Live URL (http/https, non-Figma)
 
-### A1 — Desktop Capture (1280px viewport)
+### A0 — Prepare Selectors File
+
+`zion-capture-styles` needs a JSON file listing which CSS selectors to measure. Create a temp file:
+
+```bash
+echo '["h1", ".hero", ".btn-primary", ".card"]' > /tmp/zion-selectors.json
+```
+
+Where do selectors come from:
+- If `.sdd/vision-spec.json` exists: use its `focus_areas[].selector` values
+- If the user specified selectors: use those
+- Otherwise: inspect the page and pick the main structural elements (headings, buttons, cards, nav)
+
+### A1 — Desktop Capture (1440px viewport)
 
 Call `bin/zion-capture-styles` with the desktop viewport:
 
 ```bash
-zion-capture-styles <url> <selectors-file> desktop .sdd/refs/<name>/desktop
+zion-capture-styles <url> /tmp/zion-selectors.json desktop .sdd/refs/<name>/desktop
 ```
 
 This produces:
@@ -80,7 +93,7 @@ Save the captured style JSON:
 Call `bin/zion-capture-styles` a second time with the mobile viewport:
 
 ```bash
-zion-capture-styles <url> <selectors-file> mobile .sdd/refs/<name>/mobile
+zion-capture-styles <url> /tmp/zion-selectors.json mobile .sdd/refs/<name>/mobile
 ```
 
 Outputs:

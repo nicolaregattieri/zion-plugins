@@ -76,12 +76,12 @@ For each task, check if any file in `task.files` is a UI file:
 If the task touches one or more UI files, append visual acceptance criteria to its `criteria` list:
 
 ```
-Visual comparison will be run after this task completes:
+Visual comparison will be run by the build orchestrator after this task completes:
   - Regions: <comma-separated labels from vision-spec.json focus_areas relevant to this task>
   - Breakpoints: <list of viewport names from vision-spec.json comparisons[*].breakpoints>
   - Selectors under test: <CSS selectors from vision-spec.json focus_areas>
   - Reference: .sdd/vision-spec.json comparisons[<N>]
-  - Run: bin/zion-compare-values after build to verify CSS fidelity
+  - Note: The task-executor does NOT run visual comparison — the orchestrator handles it automatically.
 ```
 
 Match focus areas and comparisons to the task based on which UI regions the task is likely to affect (infer from file names and task description).
