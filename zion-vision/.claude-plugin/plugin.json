@@ -3,6 +3,5 @@
   "version": "0.1.0",
   "description": "Zion Vision — Measured visual QA for frontend/UI projects",
   "author": { "name": "Nicola Regattieri" },
-  "repository": "https://github.com/pivotree/zion-vision",
-  "hooks": "./hooks/hooks.json"
+  "repository": "https://github.com/pivotree/zion-vision"
 }
